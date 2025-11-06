@@ -1,6 +1,7 @@
 import 'package:calendar_bridge/src/domain/models/attendee.dart';
 import 'package:calendar_bridge/src/domain/models/event_enums.dart';
 import 'package:calendar_bridge/src/domain/models/reminder.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:meta/meta.dart';
 import 'package:rrule/rrule.dart';
 import 'package:timezone/timezone.dart';
@@ -156,6 +157,10 @@ class CalendarEvent {
 
   /// Converts the calendar event to a JSON map
   Map<String, dynamic> toJson() {
+    final recurrence = recurrenceRule?.toString();
+    if (recurrence != null) {
+      debugPrint('🌀 Recurrence rule before send: $recurrence');
+    }
     return {
       'calendarId': calendarId,
       'eventId': eventId,
