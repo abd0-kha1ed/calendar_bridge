@@ -801,6 +801,8 @@ class _CreateEditEventScreenState extends ConsumerState<CreateEditEventScreen> {
               _endTime.minute,
             );
 
+      debugPrint('Saving event with recurrence rule: $_recurrenceRule');
+
       final event = CalendarEvent(
         eventId: widget.event?.eventId,
         calendarId: _selectedCalendarId!,
@@ -822,12 +824,18 @@ class _CreateEditEventScreenState extends ConsumerState<CreateEditEventScreen> {
         recurrenceRule: _recurrenceRule,
       );
 
+      debugPrint('Event to send - recurrenceRule: ${event.recurrenceRule}');
+
       if (widget.event == null) {
         // Create new event
-        await api.createEvent(event);
+        debugPrint('Creating new event...');
+        final eventId = await api.createEvent(event);
+        debugPrint('Event created with ID: $eventId');
       } else {
         // Update existing event
-        await api.updateEvent(event);
+        debugPrint('Updating event...');
+        final eventId = await api.updateEvent(event);
+        debugPrint('Event updated with ID: $eventId');
       }
 
       // Invalidate providers to refresh data

@@ -415,12 +415,16 @@ class _RecurrenceRulePickerState extends State<RecurrenceRulePicker> {
         final untilUtc = _until!.toUtc();
         final untilStr = DateFormat("yyyyMMdd'T'HHmmss'Z'").format(untilUtc);
         rruleString += ';UNTIL=$untilStr';
+        debugPrint('📅 untilStr with Z: $untilStr');
       }
       final formattedRule = rruleString.startsWith('RRULE:')
           ? rruleString
           : 'RRULE:$rruleString';
-      debugPrint('formattedRule: $formattedRule');
-      return RecurrenceRule.fromString(formattedRule);
+      debugPrint('📝 formattedRule before parsing: $formattedRule');
+
+      final rule = RecurrenceRule.fromString(formattedRule);
+      debugPrint('✅ RecurrenceRule after parsing: ${rule.toString()}');
+      return rule;
     } catch (e) {
       // Fallback to simple daily recurrence
       return RecurrenceRule.fromString('FREQ=DAILY');

@@ -15,6 +15,10 @@ class EventDetailsScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    debugPrint('Event Details - recurrenceRule: ${event.recurrenceRule}');
+    debugPrint('Event Details - start: ${event.start}');
+    debugPrint('Event Details - end: ${event.end}');
+
     return Scaffold(
       appBar: AppBar(
         title: Text(event.title ?? 'Event Details'),
