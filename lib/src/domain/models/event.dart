@@ -157,10 +157,14 @@ class CalendarEvent {
 
   /// Converts the calendar event to a JSON map
   Map<String, dynamic> toJson() {
-    final recurrence = recurrenceRule?.toString();
-    if (recurrence != null) {
-      debugPrint('🌀 Recurrence rule before send: $recurrence');
-    }
+    final recurrence = recurrenceRule == null
+        ? null
+        : recurrenceRule!.toString().replaceAllMapped(
+      RegExp(r'(UNTIL=\d{8}T\d{6})(?!Z)'),
+          (m) => '${m[1]}Z',
+    );
+
+    debugPrint('🌀 Recurrence rule before send: $recurrence');
     return {
       'calendarId': calendarId,
       'eventId': eventId,
@@ -171,7 +175,7 @@ class CalendarEvent {
       'allDay': allDay,
       'location': location,
       'url': url,
-      'recurrenceRule': recurrenceRule?.toString(),
+      'recurrenceRule': recurrence,
       'originalStart': originalStart?.millisecondsSinceEpoch,
       'attendees': attendees.map((e) => e.toJson()).toList(),
       'reminders': reminders.map((e) => e.toJson()).toList(),

@@ -1,5 +1,6 @@
 import 'package:calendar_bridge/calendar_bridge.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 import '../../../../core/theme/theme.dart';
 
@@ -410,12 +411,16 @@ class _RecurrenceRulePickerState extends State<RecurrenceRulePicker> {
       }
 
       if (_until != null) {
-        final untilStr =
-            '${_until!.toUtc().toIso8601String().replaceAll(RegExp(r'[-:]'), '').split('.').first}Z';
+        debugPrint('🕓 _until raw: $_until');
+        final untilUtc = _until!.toUtc();
+        final untilStr = DateFormat("yyyyMMdd'T'HHmmss'Z'").format(untilUtc);
         rruleString += ';UNTIL=$untilStr';
       }
-
-      return RecurrenceRule.fromString(rruleString);
+      final formattedRule = rruleString.startsWith('RRULE:')
+          ? rruleString
+          : 'RRULE:$rruleString';
+      debugPrint('formattedRule: $formattedRule');
+      return RecurrenceRule.fromString(formattedRule);
     } catch (e) {
       // Fallback to simple daily recurrence
       return RecurrenceRule.fromString('FREQ=DAILY');

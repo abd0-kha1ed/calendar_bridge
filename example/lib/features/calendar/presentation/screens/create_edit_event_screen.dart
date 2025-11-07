@@ -847,6 +847,7 @@ class _CreateEditEventScreenState extends ConsumerState<CreateEditEventScreen> {
       }
     } catch (e) {
       if (mounted) {
+        debugPrint('Failed to save event: $e');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Failed to save event: $e'),
