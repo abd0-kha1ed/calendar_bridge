@@ -157,6 +157,7 @@ class CalendarEvent {
 
   /// Converts the calendar event to a JSON map
   Map<String, dynamic> toJson() {
+    // Ensure UNTIL in recurrence rule has Z suffix for UTC timezone
     final recurrence = recurrenceRule == null
         ? null
         : recurrenceRule!.toString().replaceAllMapped(
@@ -164,7 +165,6 @@ class CalendarEvent {
           (m) => '${m[1]}Z',
     );
 
-    debugPrint('🌀 Recurrence rule before send: $recurrence');
     return {
       'calendarId': calendarId,
       'eventId': eventId,

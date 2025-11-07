@@ -103,7 +103,12 @@ class EventManager(private val context: Context) {
 
                 description?.let { eventMap["description"] = it }
                 location?.let { eventMap["location"] = it }
-                rrule?.let { eventMap["recurrenceRule"] = it }
+                rrule?.let {
+                    // Add 'Z' suffix back to UNTIL for consistency with iOS
+                    val rruleWithZ = it.replace(Regex("(UNTIL=\\d{8}T\\d{6})(?!Z)"), "$1Z")
+                    // Add 'RRULE:' prefix for Dart RecurrenceRule.fromString()
+                    eventMap["recurrenceRule"] = "RRULE:$rruleWithZ"
+                }
   
                 if (rrule != null) {
                     eventMap["originalStart"] = originalStartTime
@@ -169,8 +174,12 @@ class EventManager(private val context: Context) {
                 put(CalendarContract.Events.STATUS, statusFromString(it as String))
             }
             
-            arguments["recurrenceRule"]?.let { 
-                put(CalendarContract.Events.RRULE, it as String)
+            arguments["recurrenceRule"]?.let {
+                // Android requires UNTIL without 'Z' suffix and without 'RRULE:' prefix
+                var rrule = (it as String).replace(Regex("(UNTIL=\\d{8}T\\d{6})Z"), "$1")
+                // Remove 'RRULE:' prefix if present
+                rrule = rrule.removePrefix("RRULE:")
+                put(CalendarContract.Events.RRULE, rrule)
             }
         }
 
@@ -246,8 +255,12 @@ class EventManager(private val context: Context) {
             values.put(CalendarContract.Events.STATUS, statusFromString(it as String))
         }
         
-        arguments["recurrenceRule"]?.let { 
-            values.put(CalendarContract.Events.RRULE, it as String)
+        arguments["recurrenceRule"]?.let {
+            // Android requires UNTIL without 'Z' suffix and without 'RRULE:' prefix
+            var rrule = (it as String).replace(Regex("(UNTIL=\\d{8}T\\d{6})Z"), "$1")
+            // Remove 'RRULE:' prefix if present
+            rrule = rrule.removePrefix("RRULE:")
+            values.put(CalendarContract.Events.RRULE, rrule)
         }
 
         val updatedRows = context.contentResolver.update(
