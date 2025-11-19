@@ -99,44 +99,161 @@ class EventManager {
     }
     
     func deleteEvent(calendarId: String, eventId: String) throws -> Bool {
+        print("🗑️ [DELETE] Starting deleteEvent - calendarId: \(calendarId), eventId: \(eventId)")
+
         guard let calendar = eventStore.calendar(withIdentifier: calendarId) else {
+            print("❌ [DELETE] Calendar not found: \(calendarId)")
             throw CalendarError.calendarNotFound(calendarId)
         }
-        
-        guard let event = eventStore.event(withIdentifier: eventId) else {
-            throw CalendarError.eventNotFound(eventId)
+        print("✅ [DELETE] Calendar found: \(calendar.title)")
+
+        // Extract master event ID if this is a composite ID
+        let masterEventId: String
+        if eventId.contains(":") {
+            masterEventId = String(eventId.split(separator: ":")[0])
+            print("ℹ️ [DELETE] Extracted master event ID: \(masterEventId)")
+        } else {
+            masterEventId = eventId
         }
-        
+
+        guard let event = eventStore.event(withIdentifier: masterEventId) else {
+            print("❌ [DELETE] Event not found: \(masterEventId)")
+            throw CalendarError.eventNotFound(masterEventId)
+        }
+        print("✅ [DELETE] Event found: \(event.title ?? "No title")")
+        print("   - Has recurrence: \(event.hasRecurrenceRules)")
+
         guard calendar.allowsContentModifications else {
+            print("❌ [DELETE] Calendar is read-only")
             throw CalendarError.invalidArgument("Cannot delete event from read-only calendar")
         }
-        
+        print("✅ [DELETE] Calendar allows modifications")
+
         do {
-            try eventStore.remove(event, span: .thisEvent)
+            // For recurring events, use .futureEvents to delete the entire series
+            // For non-recurring events, use .thisEvent
+            let span: EKSpan = event.hasRecurrenceRules ? .futureEvents : .thisEvent
+            print("🔄 [DELETE] Attempting to remove event with commit=true, span=\(span == .futureEvents ? "futureEvents (entire series)" : "thisEvent")")
+            try eventStore.remove(event, span: span, commit: true)
+            print("✅ [DELETE] Event removed successfully!")
             return true
         } catch {
+            print("❌ [DELETE] Failed to remove event: \(error.localizedDescription)")
             throw CalendarError.platformError("Failed to delete event: \(error.localizedDescription)")
         }
     }
     
     func deleteEventInstance(calendarId: String, eventId: String, startDate: Date, followingInstances: Bool) async throws -> Bool {
+        print("🗑️ [DELETE_INSTANCE] Starting deleteEventInstance")
+        print("   - calendarId: \(calendarId)")
+        print("   - eventId: \(eventId)")
+        print("   - startDate: \(startDate)")
+        print("   - followingInstances: \(followingInstances)")
+
         guard let calendar = eventStore.calendar(withIdentifier: calendarId) else {
+            print("❌ [DELETE_INSTANCE] Calendar not found: \(calendarId)")
             throw CalendarError.calendarNotFound(calendarId)
         }
-        
-        guard let event = eventStore.event(withIdentifier: eventId) else {
-            throw CalendarError.eventNotFound(eventId)
-        }
-        
+        print("✅ [DELETE_INSTANCE] Calendar found: \(calendar.title)")
+
         guard calendar.allowsContentModifications else {
+            print("❌ [DELETE_INSTANCE] Calendar is read-only")
             throw CalendarError.invalidArgument("Cannot delete event from read-only calendar")
         }
-        
+        print("✅ [DELETE_INSTANCE] Calendar allows modifications")
+
+        // Strategy: Search for the event/occurrence by date instead of relying on master event ID
+        // This is more reliable because occurrence IDs might not resolve correctly
+        print("🔍 [DELETE_INSTANCE] Searching for event/occurrence at date: \(startDate)")
+
+        // Create a time window to find the specific event/occurrence
+        let currentCalendar = Calendar.current
+        let startOfDay = currentCalendar.startOfDay(for: startDate)
+        let endOfDay = currentCalendar.date(byAdding: .day, value: 1, to: startOfDay) ?? startDate
+
+        print("   - Search window: \(startOfDay) to \(endOfDay)")
+
+        let predicate = eventStore.predicateForEvents(withStart: startOfDay, end: endOfDay, calendars: [calendar])
+        let occurrences = eventStore.events(matching: predicate)
+
+        print("📋 [DELETE_INSTANCE] Found \(occurrences.count) event(s) in date range")
+
+        // Log all events found for debugging
+        for (index, occurrence) in occurrences.enumerated() {
+            print("   [\(index)] \(occurrence.title ?? "No title")")
+            print("        Start: \(occurrence.startDate)")
+            print("        ID: \(eventIdString(occurrence))")
+            print("        Calendar Item ID: \(occurrence.calendarItemIdentifier)")
+        }
+
+        // Extract master event ID from composite ID if present
+        let masterEventId: String?
+        if eventId.contains(":") {
+            masterEventId = String(eventId.split(separator: ":")[0])
+            print("ℹ️ [DELETE_INSTANCE] Extracted master event ID: \(masterEventId ?? "nil")")
+        } else {
+            masterEventId = eventId
+            print("ℹ️ [DELETE_INSTANCE] Event ID (no colon): \(eventId)")
+        }
+
+        // Try to find the occurrence by multiple methods
+        var targetOccurrence: EKEvent?
+
+        // Method 1: Try exact event ID match
+        if let found = occurrences.first(where: { eventIdString($0) == eventId }) {
+            print("✅ [DELETE_INSTANCE] Found by exact event ID match")
+            targetOccurrence = found
+        }
+
+        // Method 2: Try matching by start date (within tolerance)
+        if targetOccurrence == nil {
+            if let found = occurrences.first(where: { abs($0.startDate.timeIntervalSince(startDate)) < 60 }) {
+                print("✅ [DELETE_INSTANCE] Found by start date match (within 60s tolerance)")
+                targetOccurrence = found
+            }
+        }
+
+        // Method 3: Try matching by calendar item identifier if we have a master ID
+        if targetOccurrence == nil, let masterId = masterEventId {
+            if let masterEvent = eventStore.event(withIdentifier: masterId) {
+                print("ℹ️ [DELETE_INSTANCE] Found master event, searching for occurrence with same calendar item ID")
+                if let found = occurrences.first(where: { $0.calendarItemIdentifier == masterEvent.calendarItemIdentifier }) {
+                    print("✅ [DELETE_INSTANCE] Found by calendar item ID match")
+                    targetOccurrence = found
+                }
+            } else {
+                print("⚠️ [DELETE_INSTANCE] Master event not found with ID: \(masterId)")
+            }
+        }
+
+        // If we found the target occurrence, delete it
+        if let occurrence = targetOccurrence {
+            print("✅ [DELETE_INSTANCE] Target event/occurrence identified:")
+            print("   - Title: \(occurrence.title ?? "No title")")
+            print("   - Start: \(occurrence.startDate)")
+            print("   - Has recurrence: \(occurrence.hasRecurrenceRules)")
+
+            return try await deleteEventWithSpan(occurrence, followingInstances: followingInstances)
+        }
+
+        // No occurrence found
+        print("❌ [DELETE_INSTANCE] No matching event/occurrence found!")
+        print("   - Searched for event ID: \(eventId)")
+        print("   - Searched for start date: \(startDate)")
+        throw CalendarError.eventNotFound("Event/occurrence not found")
+    }
+
+    private func deleteEventWithSpan(_ event: EKEvent, followingInstances: Bool) async throws -> Bool {
         do {
             let span: EKSpan = followingInstances ? .futureEvents : .thisEvent
-            try eventStore.remove(event, span: span)
+            print("🔄 [DELETE_INSTANCE] Attempting to remove event '\(event.title ?? "No title")'")
+            print("   - Start date: \(event.startDate)")
+            print("   - Span: \(span == .futureEvents ? "futureEvents" : "thisEvent")")
+            try eventStore.remove(event, span: span, commit: true)
+            print("✅ [DELETE_INSTANCE] Event removed successfully!")
             return true
         } catch {
+            print("❌ [DELETE_INSTANCE] Failed to remove: \(error.localizedDescription)")
             throw CalendarError.platformError("Failed to delete event instance: \(error.localizedDescription)")
         }
     }

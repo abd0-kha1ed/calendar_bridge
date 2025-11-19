@@ -232,13 +232,20 @@ public class CalendarBridgePlugin: NSObject, FlutterPlugin {
     }
     
     private func handleDeleteEvent(call: FlutterMethodCall, result: @escaping FlutterResult) async throws {
+        print("📨 [PLUGIN] Received deleteEvent call")
         try checkPermissions()
+        print("✅ [PLUGIN] Permissions checked")
+
         guard let arguments = call.arguments as? [String: Any],
               let calendarId = arguments["calendarId"] as? String,
               let eventId = arguments["eventId"] as? String else {
+            print("❌ [PLUGIN] Missing arguments")
             throw CalendarError.invalidArgument("Calendar ID and Event ID are required")
         }
+
+        print("📥 [PLUGIN] Arguments - calendarId: \(calendarId), eventId: \(eventId)")
         let success = try eventManager.deleteEvent(calendarId: calendarId, eventId: eventId)
+        print("📤 [PLUGIN] Returning result: \(success)")
         result(success)
     }
     
@@ -294,24 +301,34 @@ public class CalendarBridgePlugin: NSObject, FlutterPlugin {
     }
     
     private func handleDeleteEventInstance(call: FlutterMethodCall, result: @escaping FlutterResult) async throws {
+        print("📨 [PLUGIN] Received deleteEventInstance call")
         try checkPermissions()
-        
+        print("✅ [PLUGIN] Permissions checked")
+
         guard let arguments = call.arguments as? [String: Any],
               let calendarId = arguments["calendarId"] as? String,
               let eventId = arguments["eventId"] as? String,
               let startDateMs = arguments["startDate"] as? Int64 else {
+            print("❌ [PLUGIN] Missing required arguments")
             throw CalendarError.invalidArgument("Missing required arguments")
         }
-        
+
         let startDate = Date(timeIntervalSince1970: Double(startDateMs) / 1000.0)
         let followingInstances = arguments["followingInstances"] as? Bool ?? false
-        
+
+        print("📥 [PLUGIN] Arguments:")
+        print("   - calendarId: \(calendarId)")
+        print("   - eventId: \(eventId)")
+        print("   - startDate: \(startDate)")
+        print("   - followingInstances: \(followingInstances)")
+
         let success = try await eventManager.deleteEventInstance(
             calendarId: calendarId,
             eventId: eventId,
             startDate: startDate,
             followingInstances: followingInstances
         )
+        print("📤 [PLUGIN] Returning result: \(success)")
         result(success)
     }
     

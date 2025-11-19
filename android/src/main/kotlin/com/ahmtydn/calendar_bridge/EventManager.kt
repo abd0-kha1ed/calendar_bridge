@@ -302,6 +302,25 @@ class EventManager(private val context: Context) {
     }
 
     suspend fun deleteEvent(calendarId: String, eventId: String): Boolean = withContext(Dispatchers.IO) {
+        // First check if calendar is writable
+        val calendarCursor = context.contentResolver.query(
+            CalendarContract.Calendars.CONTENT_URI,
+            arrayOf(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL),
+            "${CalendarContract.Calendars._ID} = ?",
+            arrayOf(calendarId),
+            null
+        )
+
+        calendarCursor?.use {
+            if (!it.moveToFirst()) {
+                throw CalendarException.CalendarNotFound(calendarId)
+            }
+            val accessLevel = it.getInt(0)
+            if (accessLevel < CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR) {
+                throw CalendarException.InvalidArgument("Cannot delete event from read-only calendar")
+            }
+        } ?: throw CalendarException.CalendarNotFound(calendarId)
+
         // Verify event exists in the specified calendar
         val cursor = context.contentResolver.query(
             CalendarContract.Events.CONTENT_URI,
@@ -327,7 +346,26 @@ class EventManager(private val context: Context) {
     }
 
     suspend fun deleteEventInstance(calendarId: String, eventId: String, startDate: Long, followingInstances: Boolean): Boolean = withContext(Dispatchers.IO) {
-        // Verify event exists in the specified calendar
+        // First check if calendar is writable
+        val calendarCursor = context.contentResolver.query(
+            CalendarContract.Calendars.CONTENT_URI,
+            arrayOf(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL),
+            "${CalendarContract.Calendars._ID} = ?",
+            arrayOf(calendarId),
+            null
+        )
+
+        calendarCursor?.use {
+            if (!it.moveToFirst()) {
+                throw CalendarException.CalendarNotFound(calendarId)
+            }
+            val accessLevel = it.getInt(0)
+            if (accessLevel < CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR) {
+                throw CalendarException.InvalidArgument("Cannot delete event from read-only calendar")
+            }
+        } ?: throw CalendarException.CalendarNotFound(calendarId)
+
+        // Verify event exists in the specified calendar and get RRULE
         val cursor = context.contentResolver.query(
             CalendarContract.Events.CONTENT_URI,
             arrayOf(CalendarContract.Events._ID, CalendarContract.Events.CALENDAR_ID, CalendarContract.Events.RRULE),
@@ -337,34 +375,67 @@ class EventManager(private val context: Context) {
         )
 
         var isRecurring = false
+        var currentRRule: String? = null
         cursor?.use {
             if (!it.moveToFirst()) {
                 throw CalendarException.EventNotFound(eventId)
             }
-            val rrule = it.getString(2)
-            isRecurring = !rrule.isNullOrEmpty()
+            currentRRule = it.getString(2)
+            isRecurring = !currentRRule.isNullOrEmpty()
         } ?: throw CalendarException.EventNotFound(eventId)
 
-        // For recurring events, create an exception instead of deleting
-        if (isRecurring) {
+        // For non-recurring events, just delete normally
+        if (!isRecurring) {
+            return@withContext deleteEvent(calendarId, eventId)
+        }
+
+        // For recurring events
+        if (followingInstances) {
+            // Delete this and all following instances by updating RRULE with UNTIL
+            val dateFormat = SimpleDateFormat("yyyyMMdd'T'HHmmss'Z'", Locale.US)
+            dateFormat.timeZone = TimeZone.getTimeZone("UTC")
+            // Set UNTIL to one millisecond before the instance to delete
+            val untilDate = Date(startDate - 1)
+            val untilString = dateFormat.format(untilDate)
+
+            // Update the RRULE to add UNTIL
+            val updatedRRule = if (currentRRule != null) {
+                // Remove existing UNTIL if present
+                val rruleWithoutUntil = currentRRule!!.replace(Regex(";UNTIL=[^;]*"), "")
+                    .replace(Regex("UNTIL=[^;]*;?"), "")
+                // Add new UNTIL
+                if (rruleWithoutUntil.contains(";")) {
+                    "$rruleWithoutUntil;UNTIL=$untilString"
+                } else {
+                    "$rruleWithoutUntil;UNTIL=$untilString"
+                }
+            } else {
+                return@withContext false
+            }
+
+            val updateValues = ContentValues().apply {
+                put(CalendarContract.Events.RRULE, updatedRRule)
+            }
+
+            val updatedRows = context.contentResolver.update(
+                CalendarContract.Events.CONTENT_URI,
+                updateValues,
+                "${CalendarContract.Events._ID} = ?",
+                arrayOf(eventId)
+            )
+
+            return@withContext updatedRows > 0
+        } else {
+            // Delete only this instance by creating an exception
             val exceptionValues = ContentValues().apply {
                 put(CalendarContract.Events.ORIGINAL_ID, eventId)
                 put(CalendarContract.Events.ORIGINAL_INSTANCE_TIME, startDate)
                 put(CalendarContract.Events.CALENDAR_ID, calendarId)
                 put(CalendarContract.Events.STATUS, CalendarContract.Events.STATUS_CANCELED)
-                
-                if (followingInstances) {
-                    // For future events, we need to modify the original event's RRULE
-                    // This is a simplified implementation - in practice, you'd need to update the RRULE
-                    put(CalendarContract.Events.DTSTART, startDate)
-                }
             }
 
             val uri = context.contentResolver.insert(CalendarContract.Events.CONTENT_URI, exceptionValues)
             return@withContext uri != null
-        } else {
-            // For non-recurring events, just delete normally
-            return@withContext deleteEvent(calendarId, eventId)
         }
     }
 

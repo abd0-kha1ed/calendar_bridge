@@ -290,10 +290,12 @@ class EventDetailsScreen extends ConsumerWidget {
                 children: [
                   const Icon(Icons.history, size: 20),
                   const SizedBox(width: AppSpacing.sm),
-                  Text(
-                    'Series started: ${DateFormat('EEEE, MMMM d, y \'at\' h:mm a').format(event.originalStart!)}',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  Expanded(
+                    child: Text(
+                      'Series started: ${DateFormat('EEEE, MMMM d, y \'at\' h:mm a').format(event.originalStart!)}',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
                     ),
                   ),
                 ],
@@ -625,6 +627,20 @@ class EventDetailsScreen extends ConsumerWidget {
     BuildContext context,
     WidgetRef ref,
   ) async {
+    // Check if this is a recurring event
+    final isRecurring = event.recurrenceRule != null;
+
+    if (isRecurring) {
+      await _showRecurringEventDeleteDialog(context, ref);
+    } else {
+      await _showSimpleDeleteDialog(context, ref);
+    }
+  }
+
+  Future<void> _showSimpleDeleteDialog(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -667,6 +683,167 @@ class EventDetailsScreen extends ConsumerWidget {
             ),
           );
         }
+      }
+    }
+  }
+
+  Future<void> _showRecurringEventDeleteDialog(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
+    final deleteOption = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Recurring Event'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'This is a recurring event. How would you like to delete it?',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            _buildDeleteOption(
+              context,
+              icon: Icons.event,
+              title: 'This event',
+              description: 'Delete only this occurrence',
+              value: 'this',
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            _buildDeleteOption(
+              context,
+              icon: Icons.event_repeat,
+              title: 'This and following events',
+              description: 'Delete this and all future occurrences',
+              value: 'following',
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+
+    if (deleteOption != null) {
+      await _performDelete(context, ref, deleteOption);
+    }
+  }
+
+  Widget _buildDeleteOption(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required String description,
+    required String value,
+  }) {
+    return InkWell(
+      onTap: () => Navigator.of(context).pop(value),
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.sm),
+        child: Row(
+          children: [
+            Icon(icon, color: Theme.of(context).colorScheme.primary),
+            const SizedBox(width: AppSpacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  Text(
+                    description,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _performDelete(
+    BuildContext context,
+    WidgetRef ref,
+    String deleteOption,
+  ) async {
+    debugPrint('🗑️ [FLUTTER] Starting delete operation - option: $deleteOption');
+    debugPrint('   - Event ID: ${event.eventId}');
+    debugPrint('   - Calendar ID: ${event.calendarId}');
+    debugPrint('   - Event Title: ${event.title}');
+    debugPrint('   - Is Recurring: ${event.recurrenceRule != null}');
+
+    try {
+      final api = ref.read(calendarBridgeProvider);
+
+      switch (deleteOption) {
+        case 'this':
+          // Delete only this instance
+          debugPrint('🔄 [FLUTTER] Calling deleteEventInstance (this only)');
+          if (event.start != null) {
+            final result = await api.deleteEventInstance(
+              event.calendarId,
+              event.eventId!,
+              event.start!,
+              followingInstances: false,
+            );
+            debugPrint('✅ [FLUTTER] deleteEventInstance completed - result: $result');
+          } else {
+            debugPrint('❌ [FLUTTER] Event start is null!');
+          }
+          break;
+        case 'following':
+          // Delete this and following instances
+          debugPrint('🔄 [FLUTTER] Calling deleteEventInstance (this and following)');
+          if (event.start != null) {
+            final result = await api.deleteEventInstance(
+              event.calendarId,
+              event.eventId!,
+              event.start!,
+              followingInstances: true,
+            );
+            debugPrint('✅ [FLUTTER] deleteEventInstance completed - result: $result');
+          } else {
+            debugPrint('❌ [FLUTTER] Event start is null!');
+          }
+          break;
+      }
+
+      debugPrint('🔄 [FLUTTER] Invalidating events provider');
+      ref.invalidate(eventsProvider);
+
+      if (context.mounted) {
+        debugPrint('✅ [FLUTTER] Delete operation successful - showing success message');
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Event deleted successfully!')),
+        );
+      }
+    } catch (e, stackTrace) {
+      debugPrint('❌ [FLUTTER] Delete operation failed: $e');
+      debugPrint('Stack trace: $stackTrace');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to delete event: $e'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
       }
     }
   }
