@@ -302,6 +302,10 @@ class EventManager(private val context: Context) {
     }
 
     suspend fun deleteEvent(calendarId: String, eventId: String): Boolean = withContext(Dispatchers.IO) {
+        android.util.Log.d("CalendarBridge", "[Android EventManager] deleteEvent called")
+        android.util.Log.d("CalendarBridge", "[Android EventManager]   calendarId: $calendarId")
+        android.util.Log.d("CalendarBridge", "[Android EventManager]   eventId: $eventId")
+
         // First check if calendar is writable
         val calendarCursor = context.contentResolver.query(
             CalendarContract.Calendars.CONTENT_URI,
@@ -313,10 +317,13 @@ class EventManager(private val context: Context) {
 
         calendarCursor?.use {
             if (!it.moveToFirst()) {
+                android.util.Log.e("CalendarBridge", "[Android EventManager] Calendar not found: $calendarId")
                 throw CalendarException.CalendarNotFound(calendarId)
             }
             val accessLevel = it.getInt(0)
+            android.util.Log.d("CalendarBridge", "[Android EventManager]   Calendar access level: $accessLevel")
             if (accessLevel < CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR) {
+                android.util.Log.e("CalendarBridge", "[Android EventManager] Calendar is read-only")
                 throw CalendarException.InvalidArgument("Cannot delete event from read-only calendar")
             }
         } ?: throw CalendarException.CalendarNotFound(calendarId)
@@ -332,20 +339,30 @@ class EventManager(private val context: Context) {
 
         cursor?.use {
             if (!it.moveToFirst()) {
+                android.util.Log.e("CalendarBridge", "[Android EventManager] Event not found: $eventId")
                 throw CalendarException.EventNotFound(eventId)
             }
+            android.util.Log.d("CalendarBridge", "[Android EventManager]   Event found in calendar")
         } ?: throw CalendarException.EventNotFound(eventId)
 
+        android.util.Log.d("CalendarBridge", "[Android EventManager] Deleting event...")
         val deletedRows = context.contentResolver.delete(
             CalendarContract.Events.CONTENT_URI,
             "${CalendarContract.Events._ID} = ?",
             arrayOf(eventId)
         )
 
+        android.util.Log.d("CalendarBridge", "[Android EventManager] Deleted rows: $deletedRows")
         return@withContext deletedRows > 0
     }
 
     suspend fun deleteEventInstance(calendarId: String, eventId: String, startDate: Long, followingInstances: Boolean): Boolean = withContext(Dispatchers.IO) {
+        android.util.Log.d("CalendarBridge", "[Android EventManager] deleteEventInstance called")
+        android.util.Log.d("CalendarBridge", "[Android EventManager]   calendarId: $calendarId")
+        android.util.Log.d("CalendarBridge", "[Android EventManager]   eventId: $eventId")
+        android.util.Log.d("CalendarBridge", "[Android EventManager]   startDate: $startDate (${Date(startDate)})")
+        android.util.Log.d("CalendarBridge", "[Android EventManager]   followingInstances: $followingInstances")
+
         // First check if calendar is writable
         val calendarCursor = context.contentResolver.query(
             CalendarContract.Calendars.CONTENT_URI,
@@ -357,10 +374,13 @@ class EventManager(private val context: Context) {
 
         calendarCursor?.use {
             if (!it.moveToFirst()) {
+                android.util.Log.e("CalendarBridge", "[Android EventManager] Calendar not found: $calendarId")
                 throw CalendarException.CalendarNotFound(calendarId)
             }
             val accessLevel = it.getInt(0)
+            android.util.Log.d("CalendarBridge", "[Android EventManager]   Calendar access level: $accessLevel")
             if (accessLevel < CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR) {
+                android.util.Log.e("CalendarBridge", "[Android EventManager] Calendar is read-only")
                 throw CalendarException.InvalidArgument("Cannot delete event from read-only calendar")
             }
         } ?: throw CalendarException.CalendarNotFound(calendarId)
@@ -368,7 +388,7 @@ class EventManager(private val context: Context) {
         // Verify event exists in the specified calendar and get RRULE
         val cursor = context.contentResolver.query(
             CalendarContract.Events.CONTENT_URI,
-            arrayOf(CalendarContract.Events._ID, CalendarContract.Events.CALENDAR_ID, CalendarContract.Events.RRULE),
+            arrayOf(CalendarContract.Events._ID, CalendarContract.Events.CALENDAR_ID, CalendarContract.Events.RRULE, CalendarContract.Events.DTSTART),
             "${CalendarContract.Events._ID} = ? AND ${CalendarContract.Events.CALENDAR_ID} = ?",
             arrayOf(eventId, calendarId),
             null
@@ -376,66 +396,242 @@ class EventManager(private val context: Context) {
 
         var isRecurring = false
         var currentRRule: String? = null
+        var masterStartDate: Long? = null
         cursor?.use {
             if (!it.moveToFirst()) {
+                android.util.Log.e("CalendarBridge", "[Android EventManager] Event not found: $eventId")
                 throw CalendarException.EventNotFound(eventId)
             }
             currentRRule = it.getString(2)
+            masterStartDate = it.getLong(3)
             isRecurring = !currentRRule.isNullOrEmpty()
+            android.util.Log.d("CalendarBridge", "[Android EventManager]   Event found - isRecurring: $isRecurring")
+            android.util.Log.d("CalendarBridge", "[Android EventManager]   RRULE: $currentRRule")
+            android.util.Log.d("CalendarBridge", "[Android EventManager]   Master start date: $masterStartDate (${masterStartDate?.let { Date(it) }})")
         } ?: throw CalendarException.EventNotFound(eventId)
 
         // For non-recurring events, just delete normally
         if (!isRecurring) {
+            android.util.Log.d("CalendarBridge", "[Android EventManager] Non-recurring event, deleting normally")
             return@withContext deleteEvent(calendarId, eventId)
         }
 
         // For recurring events
         if (followingInstances) {
+            android.util.Log.d("CalendarBridge", "[Android EventManager] Deleting this and following instances")
+
+            // Check if we're deleting from the first occurrence or before
+            // If so, delete the entire event instead of updating RRULE
+            if (startDate <= masterStartDate!!) {
+                android.util.Log.d("CalendarBridge", "[Android EventManager]   Deleting from first occurrence, removing entire event")
+                return@withContext deleteEvent(calendarId, eventId)
+            }
+
             // Delete this and all following instances by updating RRULE with UNTIL
-            val dateFormat = SimpleDateFormat("yyyyMMdd'T'HHmmss'Z'", Locale.US)
+            // Android requires UNTIL without 'Z' suffix
+            val dateFormat = SimpleDateFormat("yyyyMMdd'T'HHmmss", Locale.US)
             dateFormat.timeZone = TimeZone.getTimeZone("UTC")
             // Set UNTIL to one millisecond before the instance to delete
             val untilDate = Date(startDate - 1)
             val untilString = dateFormat.format(untilDate)
+            android.util.Log.d("CalendarBridge", "[Android EventManager]   UNTIL date: $untilString")
+
+            // Check if there's already an UNTIL that ends at or before our target date
+            // We'll proceed anyway to recreate the event (Android might not be applying RRULE correctly)
+            val existingUntilMatch = Regex("UNTIL=(\\d{8}T\\d{6}Z?)").find(currentRRule ?: "")
+            if (existingUntilMatch != null) {
+                val existingUntilStr = existingUntilMatch.groupValues[1].replace(Regex("Z$"), "")
+                try {
+                    val existingUntilDate = dateFormat.parse(existingUntilStr)
+                    if (existingUntilDate != null && existingUntilDate.time <= startDate) {
+                        android.util.Log.w("CalendarBridge", "[Android EventManager]   UNTIL already exists: $existingUntilStr (same or before target)")
+                        android.util.Log.w("CalendarBridge", "[Android EventManager]   But we'll recreate the event anyway to force Android to apply it")
+                        // Don't return - continue to recreate the event
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("CalendarBridge", "[Android EventManager]   Could not parse existing UNTIL: $existingUntilStr")
+                }
+            }
 
             // Update the RRULE to add UNTIL
             val updatedRRule = if (currentRRule != null) {
                 // Remove existing UNTIL if present
                 val rruleWithoutUntil = currentRRule!!.replace(Regex(";UNTIL=[^;]*"), "")
                     .replace(Regex("UNTIL=[^;]*;?"), "")
-                // Add new UNTIL
+                // Add new UNTIL (without Z suffix for Android)
                 if (rruleWithoutUntil.contains(";")) {
                     "$rruleWithoutUntil;UNTIL=$untilString"
                 } else {
                     "$rruleWithoutUntil;UNTIL=$untilString"
                 }
             } else {
+                android.util.Log.e("CalendarBridge", "[Android EventManager] Current RRULE is null, cannot update")
                 return@withContext false
             }
 
-            val updateValues = ContentValues().apply {
-                put(CalendarContract.Events.RRULE, updatedRRule)
+            android.util.Log.d("CalendarBridge", "[Android EventManager]   Updated RRULE: $updatedRRule")
+
+            // Get all event details before deleting
+            val eventCursor = context.contentResolver.query(
+                CalendarContract.Events.CONTENT_URI,
+                arrayOf(
+                    CalendarContract.Events.TITLE,
+                    CalendarContract.Events.DESCRIPTION,
+                    CalendarContract.Events.EVENT_LOCATION,
+                    CalendarContract.Events.DTSTART,
+                    CalendarContract.Events.DTEND,
+                    CalendarContract.Events.ALL_DAY,
+                    CalendarContract.Events.AVAILABILITY,
+                    CalendarContract.Events.STATUS,
+                    CalendarContract.Events.EVENT_TIMEZONE
+                ),
+                "${CalendarContract.Events._ID} = ?",
+                arrayOf(eventId),
+                null
+            )
+
+            var eventData: Map<String, Any?>? = null
+            eventCursor?.use {
+                if (it.moveToFirst()) {
+                    eventData = mapOf(
+                        "title" to it.getString(0),
+                        "description" to it.getString(1),
+                        "location" to it.getString(2),
+                        "dtstart" to it.getLong(3),
+                        "dtend" to it.getLong(4),
+                        "allDay" to (it.getInt(5) == 1),
+                        "availability" to it.getInt(6),
+                        "status" to it.getInt(7),
+                        "timezone" to it.getString(8)
+                    )
+                }
             }
 
-            val updatedRows = context.contentResolver.update(
+            if (eventData == null) {
+                android.util.Log.e("CalendarBridge", "[Android EventManager] Failed to get event data")
+                return@withContext false
+            }
+
+            android.util.Log.d("CalendarBridge", "[Android EventManager]   Deleting old event and creating new one with updated RRULE")
+
+            // Delete old event
+            val deletedRows = context.contentResolver.delete(
                 CalendarContract.Events.CONTENT_URI,
-                updateValues,
                 "${CalendarContract.Events._ID} = ?",
                 arrayOf(eventId)
             )
 
-            return@withContext updatedRows > 0
-        } else {
-            // Delete only this instance by creating an exception
-            val exceptionValues = ContentValues().apply {
-                put(CalendarContract.Events.ORIGINAL_ID, eventId)
-                put(CalendarContract.Events.ORIGINAL_INSTANCE_TIME, startDate)
-                put(CalendarContract.Events.CALENDAR_ID, calendarId)
-                put(CalendarContract.Events.STATUS, CalendarContract.Events.STATUS_CANCELED)
+            if (deletedRows == 0) {
+                android.util.Log.e("CalendarBridge", "[Android EventManager] Failed to delete old event")
+                return@withContext false
             }
 
+            // Create new event with updated RRULE
+            val newEventValues = ContentValues().apply {
+                put(CalendarContract.Events.CALENDAR_ID, calendarId.toLong())
+                put(CalendarContract.Events.TITLE, eventData["title"] as String)
+                put(CalendarContract.Events.DTSTART, eventData["dtstart"] as Long)
+                put(CalendarContract.Events.DTEND, eventData["dtend"] as Long)
+                put(CalendarContract.Events.ALL_DAY, if (eventData["allDay"] as Boolean) 1 else 0)
+                put(CalendarContract.Events.AVAILABILITY, eventData["availability"] as Int)
+                put(CalendarContract.Events.STATUS, eventData["status"] as Int)
+                put(CalendarContract.Events.EVENT_TIMEZONE, eventData["timezone"] as String)
+                put(CalendarContract.Events.RRULE, updatedRRule)
+
+                eventData["description"]?.let {
+                    put(CalendarContract.Events.DESCRIPTION, it as String)
+                }
+                eventData["location"]?.let {
+                    put(CalendarContract.Events.EVENT_LOCATION, it as String)
+                }
+            }
+
+            val uri = context.contentResolver.insert(CalendarContract.Events.CONTENT_URI, newEventValues)
+
+            if (uri != null) {
+                val newEventId = uri.lastPathSegment
+                android.util.Log.d("CalendarBridge", "[Android EventManager]   New event created with ID: $newEventId")
+
+                // Copy attendees from old event
+                val attendees = getEventAttendees(eventId)
+                if (attendees.isNotEmpty()) {
+                    android.util.Log.d("CalendarBridge", "[Android EventManager]   Copying ${attendees.size} attendees")
+                    addEventAttendees(newEventId!!, attendees)
+                }
+
+                // Copy reminders from old event
+                val reminders = getEventReminders(eventId)
+                if (reminders.isNotEmpty()) {
+                    android.util.Log.d("CalendarBridge", "[Android EventManager]   Copying ${reminders.size} reminders")
+                    addEventReminders(newEventId!!, reminders)
+                }
+
+                return@withContext true
+            } else {
+                android.util.Log.e("CalendarBridge", "[Android EventManager]   Failed to create new event")
+                return@withContext false
+            }
+        } else {
+            android.util.Log.d("CalendarBridge", "[Android EventManager] Deleting only this instance by creating exception")
+
+            // Get event details for the exception
+            val eventCursor = context.contentResolver.query(
+                CalendarContract.Events.CONTENT_URI,
+                arrayOf(
+                    CalendarContract.Events.TITLE,
+                    CalendarContract.Events.DTSTART,
+                    CalendarContract.Events.DTEND,
+                    CalendarContract.Events.ALL_DAY,
+                    CalendarContract.Events.EVENT_TIMEZONE
+                ),
+                "${CalendarContract.Events._ID} = ?",
+                arrayOf(eventId),
+                null
+            )
+
+            var title: String? = null
+            var dtStart: Long? = null
+            var dtEnd: Long? = null
+            var allDay: Int = 0
+            var timezone: String? = null
+
+            eventCursor?.use {
+                if (it.moveToFirst()) {
+                    title = it.getString(0)
+                    dtStart = it.getLong(1)
+                    dtEnd = it.getLong(2)
+                    allDay = it.getInt(3)
+                    timezone = it.getString(4)
+                }
+            }
+
+            if (title == null || dtStart == null || dtEnd == null) {
+                android.util.Log.e("CalendarBridge", "[Android EventManager] Failed to get event details for exception")
+                return@withContext false
+            }
+
+            // Calculate the duration to maintain it for the exception
+            val duration = dtEnd!! - dtStart!!
+
+            // Create exception event with all required fields
+            val exceptionValues = ContentValues().apply {
+                put(CalendarContract.Events.CALENDAR_ID, calendarId)
+                put(CalendarContract.Events.ORIGINAL_ID, eventId)
+                put(CalendarContract.Events.ORIGINAL_INSTANCE_TIME, startDate)
+                put(CalendarContract.Events.TITLE, title)
+                put(CalendarContract.Events.DTSTART, startDate)
+                put(CalendarContract.Events.DTEND, startDate + duration)
+                put(CalendarContract.Events.ALL_DAY, allDay)
+                put(CalendarContract.Events.STATUS, CalendarContract.Events.STATUS_CANCELED)
+                timezone?.let { put(CalendarContract.Events.EVENT_TIMEZONE, it) }
+            }
+
+            android.util.Log.d("CalendarBridge", "[Android EventManager]   Creating exception event...")
+            android.util.Log.d("CalendarBridge", "[Android EventManager]   Original ID: $eventId, Instance time: $startDate")
             val uri = context.contentResolver.insert(CalendarContract.Events.CONTENT_URI, exceptionValues)
-            return@withContext uri != null
+            val success = uri != null
+            android.util.Log.d("CalendarBridge", "[Android EventManager]   Exception created: $success (URI: $uri)")
+            return@withContext success
         }
     }
 

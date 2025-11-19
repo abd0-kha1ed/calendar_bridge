@@ -149,17 +149,23 @@ class CalendarBridgePlugin: FlutterPlugin, MethodCallHandler, ActivityAware {
     if (!calendarManager.hasPermissionsBoolean()) {
       throw CalendarException.PermissionDenied()
     }
-    
+
     val arguments = call.arguments as? Map<String, Any>
       ?: throw CalendarException.InvalidArgument("Missing arguments")
-    
+
     val calendarId = arguments["calendarId"] as? String
       ?: throw CalendarException.InvalidArgument("Calendar ID is required")
-    
+
     val eventId = arguments["eventId"] as? String
       ?: throw CalendarException.InvalidArgument("Event ID is required")
-    
+
+    android.util.Log.d("CalendarBridge", "[Android Plugin] handleDeleteEvent called")
+    android.util.Log.d("CalendarBridge", "[Android Plugin]   calendarId: $calendarId")
+    android.util.Log.d("CalendarBridge", "[Android Plugin]   eventId: $eventId")
+
     val success = eventManager.deleteEvent(calendarId, eventId)
+
+    android.util.Log.d("CalendarBridge", "[Android Plugin] deleteEvent result: $success")
     result.success(success)
   }
 
@@ -247,22 +253,30 @@ class CalendarBridgePlugin: FlutterPlugin, MethodCallHandler, ActivityAware {
     if (!calendarManager.hasPermissionsBoolean()) {
       throw CalendarException.PermissionDenied()
     }
-    
+
     val arguments = call.arguments as? Map<String, Any>
       ?: throw CalendarException.InvalidArgument("Missing arguments")
-    
+
     val calendarId = arguments["calendarId"] as? String
       ?: throw CalendarException.InvalidArgument("Missing calendarId")
-      
+
     val eventId = arguments["eventId"] as? String
       ?: throw CalendarException.InvalidArgument("Missing eventId")
-      
+
     val startDate = arguments["startDate"] as? Long
       ?: throw CalendarException.InvalidArgument("Missing startDate")
-      
+
     val followingInstances = arguments["followingInstances"] as? Boolean ?: false
-    
+
+    android.util.Log.d("CalendarBridge", "[Android Plugin] handleDeleteEventInstance called")
+    android.util.Log.d("CalendarBridge", "[Android Plugin]   calendarId: $calendarId")
+    android.util.Log.d("CalendarBridge", "[Android Plugin]   eventId: $eventId")
+    android.util.Log.d("CalendarBridge", "[Android Plugin]   startDate: $startDate (${java.util.Date(startDate)})")
+    android.util.Log.d("CalendarBridge", "[Android Plugin]   followingInstances: $followingInstances")
+
     val success = eventManager.deleteEventInstance(calendarId, eventId, startDate, followingInstances)
+
+    android.util.Log.d("CalendarBridge", "[Android Plugin] deleteEventInstance result: $success")
     result.success(success)
   }
 
