@@ -4,6 +4,7 @@ export 'package:rrule/rrule.dart'
 export 'src/calendar_bridge_api.dart';
 export 'src/domain/models/attendee.dart';
 export 'src/domain/models/calendar.dart';
+export 'src/domain/models/delete_event_result.dart';
 export 'src/domain/models/event.dart';
 export 'src/domain/models/event_enums.dart';
 export 'src/domain/models/exceptions.dart';

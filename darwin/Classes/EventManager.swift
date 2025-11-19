@@ -143,7 +143,7 @@ class EventManager {
         }
     }
     
-    func deleteEventInstance(calendarId: String, eventId: String, startDate: Date, followingInstances: Bool) async throws -> Bool {
+    func deleteEventInstance(calendarId: String, eventId: String, startDate: Date, followingInstances: Bool) async throws -> String? {
         print("🗑️ [DELETE_INSTANCE] Starting deleteEventInstance")
         print("   - calendarId: \(calendarId)")
         print("   - eventId: \(eventId)")
@@ -233,7 +233,7 @@ class EventManager {
             print("   - Start: \(occurrence.startDate)")
             print("   - Has recurrence: \(occurrence.hasRecurrenceRules)")
 
-            return try await deleteEventWithSpan(occurrence, followingInstances: followingInstances)
+            return try await deleteEventWithSpan(occurrence, eventId: eventId, followingInstances: followingInstances)
         }
 
         // No occurrence found
@@ -243,15 +243,35 @@ class EventManager {
         throw CalendarError.eventNotFound("Event/occurrence not found")
     }
 
-    private func deleteEventWithSpan(_ event: EKEvent, followingInstances: Bool) async throws -> Bool {
+    private func deleteEventWithSpan(_ event: EKEvent, eventId: String, followingInstances: Bool) async throws -> String? {
         do {
             let span: EKSpan = followingInstances ? .futureEvents : .thisEvent
+            let isRecurring = event.hasRecurrenceRules
+
             print("🔄 [DELETE_INSTANCE] Attempting to remove event '\(event.title ?? "No title")'")
             print("   - Start date: \(event.startDate)")
             print("   - Span: \(span == .futureEvents ? "futureEvents" : "thisEvent")")
+            print("   - Is recurring: \(isRecurring)")
+
             try eventStore.remove(event, span: span, commit: true)
             print("✅ [DELETE_INSTANCE] Event removed successfully!")
-            return true
+
+            // For iOS, EventKit handles recurring events intelligently:
+            // - .thisEvent: Creates an exception, master event ID remains the same
+            // - .futureEvents on recurring: Modifies recurrence rule, master event ID remains the same
+            // - .futureEvents on first occurrence: Deletes entire series, returns nil
+            // Unlike Android, iOS does NOT recreate events, so eventId typically stays the same
+
+            if !isRecurring || span == .thisEvent {
+                // Non-recurring event deleted OR exception created -> original eventId still valid
+                print("ℹ️ [DELETE_INSTANCE] Returning original eventId (exception or non-recurring): \(eventId)")
+                return eventId
+            } else {
+                // Recurring event with futureEvents span - event is modified in place
+                // EventId remains the same on iOS (unlike Android)
+                print("ℹ️ [DELETE_INSTANCE] Returning original eventId (recurring modified): \(eventId)")
+                return eventId
+            }
         } catch {
             print("❌ [DELETE_INSTANCE] Failed to remove: \(error.localizedDescription)")
             throw CalendarError.platformError("Failed to delete event instance: \(error.localizedDescription)")

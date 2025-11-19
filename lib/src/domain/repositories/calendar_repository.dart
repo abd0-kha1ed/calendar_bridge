@@ -5,6 +5,7 @@ import 'package:calendar_bridge/calendar_bridge.dart'
         InvalidArgumentException,
         PermissionDeniedException;
 import 'package:calendar_bridge/src/domain/models/calendar.dart';
+import 'package:calendar_bridge/src/domain/models/delete_event_result.dart';
 import 'package:calendar_bridge/src/domain/models/event.dart';
 import 'package:calendar_bridge/src/domain/models/exceptions.dart'
     show
@@ -117,10 +118,12 @@ abstract interface class CalendarRepository {
   /// [startDate] - The start date of the specific instance to delete
   /// [followingInstances] - Whether to delete following instances as well
   ///
-  /// Returns true if the event instance was successfully deleted
+  /// Returns a [DeleteEventResult] containing success status and potentially a new eventId
+  /// Note: When deleting "this and following instances", the eventId may change due to
+  /// Android Calendar Provider requiring event recreation with updated RRULE
   /// Throws [PermissionDeniedException] if permissions are not granted
   /// Throws [EventNotFoundException] if the event doesn't exist
-  Future<bool> deleteEventInstance(
+  Future<DeleteEventResult> deleteEventInstance(
     String calendarId,
     String eventId,
     DateTime startDate, {

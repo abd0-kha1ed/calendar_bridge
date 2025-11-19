@@ -1,3 +1,4 @@
+import 'package:calendar_bridge/calendar_bridge.dart';
 import 'package:calendar_bridge/src/domain/models/event.dart';
 import 'package:calendar_bridge/src/domain/models/exceptions.dart';
 import 'package:calendar_bridge/src/domain/repositories/calendar_repository.dart';
@@ -218,10 +219,10 @@ class EventUseCases {
   /// [startDate] - The start date of the specific instance to delete
   /// [followingInstances] - Whether to delete following instances as well
   ///
-  /// Returns true if the event instance was successfully deleted
+  /// Returns a [DeleteEventResult] containing success status and potentially a new eventId
   /// Throws [PermissionDeniedException] if permissions are not granted
   /// Throws [EventNotFoundException] if the event doesn't exist
-  Future<bool> deleteEventInstance(
+  Future<DeleteEventResult> deleteEventInstance(
     String calendarId,
     String eventId,
     DateTime startDate, {

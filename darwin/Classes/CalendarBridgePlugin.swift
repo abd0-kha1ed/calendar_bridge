@@ -322,14 +322,22 @@ public class CalendarBridgePlugin: NSObject, FlutterPlugin {
         print("   - startDate: \(startDate)")
         print("   - followingInstances: \(followingInstances)")
 
-        let success = try await eventManager.deleteEventInstance(
+        let resultEventId = try await eventManager.deleteEventInstance(
             calendarId: calendarId,
             eventId: eventId,
             startDate: startDate,
             followingInstances: followingInstances
         )
-        print("📤 [PLUGIN] Returning result: \(success)")
-        result(success)
+
+        print("📤 [PLUGIN] Returning result - eventId: \(resultEventId ?? "nil")")
+
+        // Return a map with success flag and eventId (matching Android behavior)
+        let resultMap: [String: Any?] = [
+            "success": resultEventId != nil,
+            "eventId": resultEventId
+        ]
+
+        result(resultMap)
     }
     
     // MARK: - Error Handling

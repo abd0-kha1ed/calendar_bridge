@@ -791,18 +791,23 @@ class EventDetailsScreen extends ConsumerWidget {
     try {
       final api = ref.read(calendarBridgeProvider);
 
+      DeleteEventResult? result;
+
       switch (deleteOption) {
         case 'this':
           // Delete only this instance
           debugPrint('🔄 [FLUTTER] Calling deleteEventInstance (this only)');
           if (event.start != null) {
-            final result = await api.deleteEventInstance(
+            result = await api.deleteEventInstance(
               event.calendarId,
               event.eventId!,
               event.start!,
               followingInstances: false,
             );
             debugPrint('✅ [FLUTTER] deleteEventInstance completed - result: $result');
+            if (result.eventId != null && result.eventId != event.eventId) {
+              debugPrint('⚠️ [FLUTTER] EventId remained same (exception created)');
+            }
           } else {
             debugPrint('❌ [FLUTTER] Event start is null!');
           }
@@ -811,17 +816,25 @@ class EventDetailsScreen extends ConsumerWidget {
           // Delete this and following instances
           debugPrint('🔄 [FLUTTER] Calling deleteEventInstance (this and following)');
           if (event.start != null) {
-            final result = await api.deleteEventInstance(
+            result = await api.deleteEventInstance(
               event.calendarId,
               event.eventId!,
               event.start!,
               followingInstances: true,
             );
             debugPrint('✅ [FLUTTER] deleteEventInstance completed - result: $result');
+            if (result.eventId != null && result.eventId != event.eventId) {
+              debugPrint('🔄 [FLUTTER] EventId changed! Old: ${event.eventId}, New: ${result.eventId}');
+            }
           } else {
             debugPrint('❌ [FLUTTER] Event start is null!');
           }
           break;
+      }
+
+      // Check if operation was successful
+      if (result == null || !result.success) {
+        throw Exception('Delete operation failed');
       }
 
       debugPrint('🔄 [FLUTTER] Invalidating events provider');

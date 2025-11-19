@@ -274,10 +274,15 @@ class CalendarBridgePlugin: FlutterPlugin, MethodCallHandler, ActivityAware {
     android.util.Log.d("CalendarBridge", "[Android Plugin]   startDate: $startDate (${java.util.Date(startDate)})")
     android.util.Log.d("CalendarBridge", "[Android Plugin]   followingInstances: $followingInstances")
 
-    val success = eventManager.deleteEventInstance(calendarId, eventId, startDate, followingInstances)
+    val resultEventId = eventManager.deleteEventInstance(calendarId, eventId, startDate, followingInstances)
 
-    android.util.Log.d("CalendarBridge", "[Android Plugin] deleteEventInstance result: $success")
-    result.success(success)
+    android.util.Log.d("CalendarBridge", "[Android Plugin] deleteEventInstance result: $resultEventId")
+
+    // Return a map with success flag and new eventId if changed
+    result.success(mapOf(
+      "success" to (resultEventId != null),
+      "eventId" to resultEventId
+    ))
   }
 
   override fun onDetachedFromEngine(@NonNull binding: FlutterPlugin.FlutterPluginBinding) {

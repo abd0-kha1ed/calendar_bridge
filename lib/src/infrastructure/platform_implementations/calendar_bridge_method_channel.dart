@@ -235,14 +235,14 @@ final class CalendarBridgeMethodChannel implements CalendarRepository {
   }
 
   @override
-  Future<bool> deleteEventInstance(
+  Future<DeleteEventResult> deleteEventInstance(
     String calendarId,
     String eventId,
     DateTime startDate, {
     bool followingInstances = false,
   }) async {
     try {
-      final result = await _methodChannel.invokeMethod<bool>(
+      final result = await _methodChannel.invokeMethod<Map<Object?, Object?>>(
         'deleteEventInstance',
         {
           'calendarId': calendarId,
@@ -252,7 +252,11 @@ final class CalendarBridgeMethodChannel implements CalendarRepository {
         },
       );
 
-      return result ?? false;
+      if (result == null) {
+        return const DeleteEventResult(success: false);
+      }
+
+      return DeleteEventResult.fromMap(result);
     } on PlatformException catch (e) {
       throw _mapPlatformException(e);
     }

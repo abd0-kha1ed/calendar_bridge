@@ -356,7 +356,7 @@ class EventManager(private val context: Context) {
         return@withContext deletedRows > 0
     }
 
-    suspend fun deleteEventInstance(calendarId: String, eventId: String, startDate: Long, followingInstances: Boolean): Boolean = withContext(Dispatchers.IO) {
+    suspend fun deleteEventInstance(calendarId: String, eventId: String, startDate: Long, followingInstances: Boolean): String? = withContext(Dispatchers.IO) {
         android.util.Log.d("CalendarBridge", "[Android EventManager] deleteEventInstance called")
         android.util.Log.d("CalendarBridge", "[Android EventManager]   calendarId: $calendarId")
         android.util.Log.d("CalendarBridge", "[Android EventManager]   eventId: $eventId")
@@ -413,7 +413,8 @@ class EventManager(private val context: Context) {
         // For non-recurring events, just delete normally
         if (!isRecurring) {
             android.util.Log.d("CalendarBridge", "[Android EventManager] Non-recurring event, deleting normally")
-            return@withContext deleteEvent(calendarId, eventId)
+            deleteEvent(calendarId, eventId)
+            return@withContext null // Event deleted, no new ID
         }
 
         // For recurring events
@@ -424,7 +425,8 @@ class EventManager(private val context: Context) {
             // If so, delete the entire event instead of updating RRULE
             if (startDate <= masterStartDate!!) {
                 android.util.Log.d("CalendarBridge", "[Android EventManager]   Deleting from first occurrence, removing entire event")
-                return@withContext deleteEvent(calendarId, eventId)
+                deleteEvent(calendarId, eventId)
+                return@withContext null // Entire event deleted, no new ID
             }
 
             // Delete this and all following instances by updating RRULE with UNTIL
@@ -466,7 +468,7 @@ class EventManager(private val context: Context) {
                 }
             } else {
                 android.util.Log.e("CalendarBridge", "[Android EventManager] Current RRULE is null, cannot update")
-                return@withContext false
+                return@withContext null
             }
 
             android.util.Log.d("CalendarBridge", "[Android EventManager]   Updated RRULE: $updatedRRule")
@@ -509,10 +511,17 @@ class EventManager(private val context: Context) {
 
             if (eventData == null) {
                 android.util.Log.e("CalendarBridge", "[Android EventManager] Failed to get event data")
-                return@withContext false
+                return@withContext null
             }
 
             android.util.Log.d("CalendarBridge", "[Android EventManager]   Deleting old event and creating new one with updated RRULE")
+
+            // IMPORTANT: Save exceptions before deleting the master event
+            // When we delete the master event, all exceptions are CASCADE deleted
+            val existingExceptions = getEventExceptions(eventId, startDate)
+            if (existingExceptions.isNotEmpty()) {
+                android.util.Log.d("CalendarBridge", "[Android EventManager]   Found ${existingExceptions.size} existing exceptions to preserve")
+            }
 
             // Delete old event
             val deletedRows = context.contentResolver.delete(
@@ -523,7 +532,7 @@ class EventManager(private val context: Context) {
 
             if (deletedRows == 0) {
                 android.util.Log.e("CalendarBridge", "[Android EventManager] Failed to delete old event")
-                return@withContext false
+                return@withContext null
             }
 
             // Create new event with updated RRULE
@@ -566,10 +575,17 @@ class EventManager(private val context: Context) {
                     addEventReminders(newEventId!!, reminders)
                 }
 
-                return@withContext true
+                // Recreate exceptions that were deleted when we removed the master event
+                if (existingExceptions.isNotEmpty()) {
+                    android.util.Log.d("CalendarBridge", "[Android EventManager]   Recreating ${existingExceptions.size} exceptions")
+                    recreateExceptions(newEventId!!, existingExceptions)
+                }
+
+                android.util.Log.d("CalendarBridge", "[Android EventManager]   Returning new event ID: $newEventId")
+                return@withContext newEventId // Return new event ID
             } else {
                 android.util.Log.e("CalendarBridge", "[Android EventManager]   Failed to create new event")
-                return@withContext false
+                return@withContext null
             }
         } else {
             android.util.Log.d("CalendarBridge", "[Android EventManager] Deleting only this instance by creating exception")
@@ -607,7 +623,7 @@ class EventManager(private val context: Context) {
 
             if (title == null || dtStart == null || dtEnd == null) {
                 android.util.Log.e("CalendarBridge", "[Android EventManager] Failed to get event details for exception")
-                return@withContext false
+                return@withContext null
             }
 
             // Calculate the duration to maintain it for the exception
@@ -631,7 +647,9 @@ class EventManager(private val context: Context) {
             val uri = context.contentResolver.insert(CalendarContract.Events.CONTENT_URI, exceptionValues)
             val success = uri != null
             android.util.Log.d("CalendarBridge", "[Android EventManager]   Exception created: $success (URI: $uri)")
-            return@withContext success
+
+            // Return original eventId since we only created an exception, the master event still exists
+            return@withContext if (success) eventId else null
         }
     }
 
@@ -797,6 +815,108 @@ class EventManager(private val context: Context) {
             "tentative" -> CalendarContract.Attendees.ATTENDEE_STATUS_TENTATIVE
             "pending" -> CalendarContract.Attendees.ATTENDEE_STATUS_INVITED
             else -> CalendarContract.Attendees.ATTENDEE_STATUS_INVITED
+        }
+    }
+
+    /**
+     * Get all exception events for a recurring event that occur BEFORE a specific date
+     * These are instances that were deleted/modified from the recurring series
+     */
+    private fun getEventExceptions(eventId: String, beforeDate: Long): List<Map<String, Any?>> {
+        val exceptions = mutableListOf<Map<String, Any?>>()
+
+        val projection = arrayOf(
+            CalendarContract.Events._ID,
+            CalendarContract.Events.ORIGINAL_INSTANCE_TIME,
+            CalendarContract.Events.TITLE,
+            CalendarContract.Events.DTSTART,
+            CalendarContract.Events.DTEND,
+            CalendarContract.Events.ALL_DAY,
+            CalendarContract.Events.STATUS,
+            CalendarContract.Events.EVENT_TIMEZONE,
+            CalendarContract.Events.DESCRIPTION,
+            CalendarContract.Events.EVENT_LOCATION
+        )
+
+        // Query for exception events where:
+        // 1. ORIGINAL_ID matches the master event ID
+        // 2. ORIGINAL_INSTANCE_TIME is before the cutoff date (we want to keep earlier exceptions)
+        val cursor = context.contentResolver.query(
+            CalendarContract.Events.CONTENT_URI,
+            projection,
+            "${CalendarContract.Events.ORIGINAL_ID} = ? AND ${CalendarContract.Events.ORIGINAL_INSTANCE_TIME} < ?",
+            arrayOf(eventId, beforeDate.toString()),
+            "${CalendarContract.Events.ORIGINAL_INSTANCE_TIME} ASC"
+        )
+
+        cursor?.use {
+            while (it.moveToNext()) {
+                val exceptionMap = mutableMapOf<String, Any?>(
+                    "originalInstanceTime" to it.getLong(1),
+                    "title" to it.getString(2),
+                    "dtstart" to it.getLong(3),
+                    "dtend" to it.getLong(4),
+                    "allDay" to (it.getInt(5) == 1),
+                    "status" to it.getInt(6),
+                    "timezone" to it.getString(7),
+                    "description" to it.getString(8),
+                    "location" to it.getString(9)
+                )
+                exceptions.add(exceptionMap)
+
+                android.util.Log.d("CalendarBridge", "[EventManager] Found exception at ${Date(it.getLong(1))}")
+            }
+        }
+
+        return exceptions
+    }
+
+    /**
+     * Recreate exception events for a new master event
+     */
+    private fun recreateExceptions(newEventId: String, exceptions: List<Map<String, Any?>>) {
+        // Get calendar ID for the new event
+        val calendarId = context.contentResolver.query(
+            CalendarContract.Events.CONTENT_URI,
+            arrayOf(CalendarContract.Events.CALENDAR_ID),
+            "${CalendarContract.Events._ID} = ?",
+            arrayOf(newEventId),
+            null
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getLong(0) else null
+        }
+
+        if (calendarId == null) {
+            android.util.Log.e("CalendarBridge", "[EventManager] Failed to get calendar ID for new event")
+            return
+        }
+
+        exceptions.forEach { exception ->
+            val values = ContentValues().apply {
+                put(CalendarContract.Events.CALENDAR_ID, calendarId)
+                put(CalendarContract.Events.ORIGINAL_ID, newEventId)
+                put(CalendarContract.Events.ORIGINAL_INSTANCE_TIME, exception["originalInstanceTime"] as Long)
+                put(CalendarContract.Events.TITLE, exception["title"] as String)
+                put(CalendarContract.Events.DTSTART, exception["dtstart"] as Long)
+                put(CalendarContract.Events.DTEND, exception["dtend"] as Long)
+                put(CalendarContract.Events.ALL_DAY, if (exception["allDay"] as Boolean) 1 else 0)
+                put(CalendarContract.Events.STATUS, exception["status"] as Int)
+                put(CalendarContract.Events.EVENT_TIMEZONE, exception["timezone"] as String?)
+
+                exception["description"]?.let {
+                    put(CalendarContract.Events.DESCRIPTION, it as String)
+                }
+                exception["location"]?.let {
+                    put(CalendarContract.Events.EVENT_LOCATION, it as String)
+                }
+            }
+
+            val uri = context.contentResolver.insert(CalendarContract.Events.CONTENT_URI, values)
+            if (uri != null) {
+                android.util.Log.d("CalendarBridge", "[EventManager] Recreated exception at ${Date(exception["originalInstanceTime"] as Long)}")
+            } else {
+                android.util.Log.e("CalendarBridge", "[EventManager] Failed to recreate exception")
+            }
         }
     }
 }
